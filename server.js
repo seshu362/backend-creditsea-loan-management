@@ -1,5 +1,6 @@
 const express = require("express");
-const sqlite3 = require("sqlite3").verbose();
+const sqlite = require("sqlite");
+const sqlite3 = require("sqlite3");
 const cors = require("cors");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
@@ -10,15 +11,18 @@ app.use(express.json());
 app.use(cors());
 
 // Database setup
-const db = new sqlite3.Database("loan_manager.db", (err) => {
-  if (err) console.error("Error connecting to database", err);
-  console.log("Connected to SQLite database");
-});
+let db;
 
-// Create tables for the application
-db.serialize(() => {
-  // Users table (admin, verifier, regular users)
-  db.run(`CREATE TABLE IF NOT EXISTS users (
+async function initializeDatabase() {
+  db = await sqlite.open({
+    filename: "loan_manager.db",
+    driver: sqlite3.Database
+  });
+
+  console.log("Connected to SQLite database");
+
+  // Create tables for the application
+  await db.exec(`CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     fullName TEXT NOT NULL,
     email TEXT NOT NULL UNIQUE,
@@ -27,8 +31,7 @@ db.serialize(() => {
     createdAt TEXT DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  // Loan applications table
-  db.run(`CREATE TABLE IF NOT EXISTS loan_applications (
+  await db.exec(`CREATE TABLE IF NOT EXISTS loan_applications (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     userId INTEGER NOT NULL,
     fullName TEXT NOT NULL,
@@ -46,8 +49,7 @@ db.serialize(() => {
     FOREIGN KEY (loanOfficerId) REFERENCES users(id)
   )`);
 
-  // Repayments table
-  db.run(`CREATE TABLE IF NOT EXISTS repayments (
+  await db.exec(`CREATE TABLE IF NOT EXISTS repayments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     loanId INTEGER NOT NULL,
     amount REAL NOT NULL,
@@ -56,167 +58,148 @@ db.serialize(() => {
     createdAt TEXT DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (loanId) REFERENCES loan_applications(id)
   )`);
-});
 
+  // Seed initial data
+  await seedDefaultUsers();
+  await seedSampleLoans();
+  await seedSampleRepayments();
+}
 
 // Seed default users (admin, verifier, and regular user)
-const seedDefaultUsers = () => {
-  const defaultUsers = [
-    {
-      fullName: "John Deo",
-      email: "admin@loanmanager.com",
-      password: "admin123",
-      role: "admin"
-    },
-    {
-      fullName: "John Okoh",
-      email: "verifier@loanmanager.com",
-      password: "verifier123",
-      role: "verifier"
-    },
-    {
-      fullName: "Regular User",
-      email: "user@loanmanager.com",
-      password: "user123",
-      role: "user"
-    }
-  ];
+async function seedDefaultUsers() {
+  const count = await db.get(`SELECT COUNT(*) AS count FROM users`);
+  
+  if (count.count === 0) {
+    const defaultUsers = [
+      {
+        fullName: "John Deo",
+        email: "admin@loanmanager.com",
+        password: "admin123",
+        role: "admin"
+      },
+      {
+        fullName: "John Okoh",
+        email: "verifier@loanmanager.com",
+        password: "verifier123",
+        role: "verifier"
+      },
+      {
+        fullName: "Regular User",
+        email: "user@loanmanager.com",
+        password: "user123",
+        role: "user"
+      }
+    ];
 
-  db.get(`SELECT COUNT(*) AS count FROM users`, (err, row) => {
-    if (err) {
-      console.error("Error checking users table:", err);
-      return;
+    for (const user of defaultUsers) {
+      const hashedPassword = await bcrypt.hash(user.password, 10);
+      await db.run(
+        `INSERT INTO users (fullName, email, password, role) VALUES (?, ?, ?, ?)`,
+        [user.fullName, user.email, hashedPassword, user.role]
+      );
     }
-
-    if (row.count === 0) {
-      defaultUsers.forEach(user => {
-        bcrypt.hash(user.password, 10, (err, hashedPassword) => {
-          if (err) {
-            console.error("Error hashing password:", err);
-            return;
-          }
-
-          db.run(
-            `INSERT INTO users (fullName, email, password, role) VALUES (?, ?, ?, ?)`,
-            [user.fullName, user.email, hashedPassword, user.role],
-            (err) => {
-              if (err) console.error("Error inserting user:", err);
-            }
-          );
-        });
-      });
-      console.log("Default users added successfully.");
-    }
-  });
-};
+    console.log("Default users added successfully.");
+  }
+}
 
 // Seed sample loan applications for demonstration
-const seedSampleLoans = () => {
-  const sampleLoans = [
-    {
-      userId: 3, // regular user
-      fullName: "Tom Cruise",
-      amount: 50000,
-      tenure: 12,
-      employmentStatus: "Employed",
-      reason: "Home renovation",
-      employmentAddress: "123 Hollywood Blvd, Los Angeles",
-      status: "pending",
-      createdAt: "2021-06-09"
-    },
-    
-    {
-      userId: 3,
-      fullName: "Robert Downey",
-      amount: 60000,
-      tenure: 24,
-      employmentStatus: "Employed",
-      reason: "When will I be charged this month?",
-      employmentAddress: "789 Malibu, CA",
-      status: "pending",
-      createdAt: "2021-06-08"
-    },
-    {
-      userId: 3,
-      fullName: "Christian Bale",
-      amount: 40000,
-      tenure: 12,
-      employmentStatus: "Self-employed",
-      reason: "Payment not going through",
-      employmentAddress: "101 Gotham City",
-      status: "verified",
-      loanOfficerId: 2,
-      createdAt: "2021-06-08"
-    },
-    {
-      userId: 3,
-      fullName: "Henry Cavill",
-      amount: 55000,
-      tenure: 24,
-      employmentStatus: "Employed",
-      reason: "Unable to add replies",
-      employmentAddress: "202 Metropolis",
-      status: "approved",
-      loanOfficerId: 2,
-      createdAt: "2021-06-08"
-    },
-    
-    {
-      userId: 3,
-      fullName: "Sam Smith",
-      amount: 30000,
-      tenure: 12,
-      employmentStatus: "Self-employed",
-      reason: "Referral Bonus",
-      employmentAddress: "404 London, UK",
-      status: "pending",
-      createdAt: "2021-06-08"
-    },
-    
-    {
-      userId: 3,
-      fullName: "Regular User",
-      amount: 100000,
-      tenure: 24,
-      employmentStatus: "Self-employed",
-      reason: "Business expansion",
-      employmentAddress: "456 Main St, New York",
-      status: "rejected",
-      loanOfficerId: 2,
-      createdAt: "2021-06-07"
-    },
-    {
-      userId: 3,
-      fullName: "Regular User",
-      amount: 100000,
-      tenure: 24,
-      employmentStatus: "Self-employed",
-      reason: "Business expansion",
-      employmentAddress: "456 Main St, New York",
-      status: "approved",
-      loanOfficerId: 2,
-      disbursedDate: "2021-05-27",
-      repaymentDate: "2023-05-27",
-      createdAt: "2021-05-27"
-    }
-  ];
+async function seedSampleLoans() {
+  const count = await db.get(`SELECT COUNT(*) AS count FROM loan_applications`);
+  
+  if (count.count === 0) {
+    const sampleLoans = [
+      {
+        userId: 3, // regular user
+        fullName: "Tom Cruise",
+        amount: 50000,
+        tenure: 12,
+        employmentStatus: "Employed",
+        reason: "Home renovation",
+        employmentAddress: "123 Hollywood Blvd, Los Angeles",
+        status: "pending",
+        createdAt: "2021-06-09"
+      },
+      {
+        userId: 3,
+        fullName: "Robert Downey",
+        amount: 60000,
+        tenure: 24,
+        employmentStatus: "Employed",
+        reason: "When will I be charged this month?",
+        employmentAddress: "789 Malibu, CA",
+        status: "pending",
+        createdAt: "2021-06-08"
+      },
+      {
+        userId: 3,
+        fullName: "Christian Bale",
+        amount: 40000,
+        tenure: 12,
+        employmentStatus: "Self-employed",
+        reason: "Payment not going through",
+        employmentAddress: "101 Gotham City",
+        status: "verified",
+        loanOfficerId: 2,
+        createdAt: "2021-06-08"
+      },
+      {
+        userId: 3,
+        fullName: "Henry Cavill",
+        amount: 55000,
+        tenure: 24,
+        employmentStatus: "Employed",
+        reason: "Unable to add replies",
+        employmentAddress: "202 Metropolis",
+        status: "approved",
+        loanOfficerId: 2,
+        createdAt: "2021-06-08"
+      },
+      {
+        userId: 3,
+        fullName: "Sam Smith",
+        amount: 30000,
+        tenure: 12,
+        employmentStatus: "Self-employed",
+        reason: "Referral Bonus",
+        employmentAddress: "404 London, UK",
+        status: "pending",
+        createdAt: "2021-06-08"
+      },
+      {
+        userId: 3,
+        fullName: "Regular User",
+        amount: 100000,
+        tenure: 24,
+        employmentStatus: "Self-employed",
+        reason: "Business expansion",
+        employmentAddress: "456 Main St, New York",
+        status: "rejected",
+        loanOfficerId: 2,
+        createdAt: "2021-06-07"
+      },
+      {
+        userId: 3,
+        fullName: "Regular User",
+        amount: 100000,
+        tenure: 24,
+        employmentStatus: "Self-employed",
+        reason: "Business expansion",
+        employmentAddress: "456 Main St, New York",
+        status: "approved",
+        loanOfficerId: 2,
+        disbursedDate: "2021-05-27",
+        repaymentDate: "2023-05-27",
+        createdAt: "2021-05-27"
+      }
+    ];
 
-  db.get(`SELECT COUNT(*) AS count FROM loan_applications`, (err, row) => {
-    if (err) {
-      console.error("Error checking loan_applications table:", err);
-      return;
-    }
-
-    if (row.count === 0) {
-      const stmt = db.prepare(
+    for (const loan of sampleLoans) {
+      await db.run(
         `INSERT INTO loan_applications (
           userId, fullName, amount, tenure, employmentStatus, reason, 
           employmentAddress, status, loanOfficerId, disbursedDate, repaymentDate, createdAt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      );
-
-      sampleLoans.forEach(loan => {
-        stmt.run(
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
           loan.userId,
           loan.fullName,
           loan.amount,
@@ -229,68 +212,48 @@ const seedSampleLoans = () => {
           loan.disbursedDate || null,
           loan.repaymentDate || null,
           loan.createdAt || null
-        );
-      });
-
-      stmt.finalize();
-      console.log("Sample loan applications added successfully.");
+        ]
+      );
     }
-  });
-};
+    console.log("Sample loan applications added successfully.");
+  }
+}
 
 // Seed sample repayments for demonstration
-const seedSampleRepayments = () => {
-  const sampleRepayments = [
-    {
-      loanId: 5, // Henry Cavill's loan
-      amount: 10000,
-      paymentDate: "2021-07-08",
-      status: "completed"
-    },
-    {
-      loanId: 6, // Chris Evans' loan
-      amount: 15000,
-      paymentDate: "2021-07-08",
-      status: "completed"
-    },
-    {
-      loanId: 10, // Regular User's approved loan
-      amount: 25000,
-      paymentDate: "2021-06-27",
-      status: "completed"
-    }
-  ];
+async function seedSampleRepayments() {
+  const count = await db.get(`SELECT COUNT(*) AS count FROM repayments`);
+  
+  if (count.count === 0) {
+    const sampleRepayments = [
+      {
+        loanId: 5, // Henry Cavill's loan
+        amount: 10000,
+        paymentDate: "2021-07-08",
+        status: "completed"
+      },
+      {
+        loanId: 6, // Chris Evans' loan
+        amount: 15000,
+        paymentDate: "2021-07-08",
+        status: "completed"
+      },
+      {
+        loanId: 10, // Regular User's approved loan
+        amount: 25000,
+        paymentDate: "2021-06-27",
+        status: "completed"
+      }
+    ];
 
-  db.get(`SELECT COUNT(*) AS count FROM repayments`, (err, row) => {
-    if (err) {
-      console.error("Error checking repayments table:", err);
-      return;
-    }
-
-    if (row.count === 0) {
-      const stmt = db.prepare(
-        `INSERT INTO repayments (loanId, amount, paymentDate, status) VALUES (?, ?, ?, ?)`
+    for (const repayment of sampleRepayments) {
+      await db.run(
+        `INSERT INTO repayments (loanId, amount, paymentDate, status) VALUES (?, ?, ?, ?)`,
+        [repayment.loanId, repayment.amount, repayment.paymentDate, repayment.status]
       );
-
-      sampleRepayments.forEach(repayment => {
-        stmt.run(
-          repayment.loanId,
-          repayment.amount,
-          repayment.paymentDate,
-          repayment.status
-        );
-      });
-
-      stmt.finalize();
-      console.log("Sample repayments added successfully.");
     }
-  });
-};
-
-// Call the functions to seed default data
-seedDefaultUsers();
-seedSampleLoans();
-seedSampleRepayments();
+    console.log("Sample repayments added successfully.");
+  }
+}
 
 // Helper function to generate JWT token
 const generateToken = (userId, role) => {
@@ -344,18 +307,17 @@ app.post(
       const { fullName, email, password } = req.body;
       const hashedPassword = await bcrypt.hash(password, 10);
 
-      const result = await new Promise((resolve, reject) => {
-        db.run(
-          `INSERT INTO users (fullName, email, password) VALUES (?, ?, ?)`,
-          [fullName, email, hashedPassword],
-          function (err) {
-            if (err) reject(err);
-            else resolve(this.lastID);
-          }
-        );
-      });
+      const result = await db.run(
+        `INSERT INTO users (fullName, email, password) VALUES (?, ?, ?)`,
+        [fullName, email, hashedPassword]
+      );
 
-      res.status(201).json({ id: result, fullName, email, role: 'user' });
+      res.status(201).json({ 
+        id: result.lastID, 
+        fullName, 
+        email, 
+        role: 'user' 
+      });
     } catch (err) {
       if (err.message.includes("UNIQUE constraint failed")) {
         res.status(400).json({ error: "Email already exists" });
@@ -380,12 +342,7 @@ app.post(
 
       const { email, password } = req.body;
 
-      const user = await new Promise((resolve, reject) => {
-        db.get(`SELECT * FROM users WHERE email = ?`, [email], (err, row) => {
-          if (err) reject(err);
-          else resolve(row);
-        });
-      });
+      const user = await db.get(`SELECT * FROM users WHERE email = ?`, [email]);
 
       if (!user) return res.status(404).json({ error: "User not found" });
 
@@ -427,7 +384,6 @@ app.get("/loan-application-form", authenticateToken, async (req, res) => {
   });
 });
 
-
 // Submit Loan Application - For User Dashboard - App Form
 app.post(
   "/loans",
@@ -447,21 +403,15 @@ app.post(
 
       const { fullName, amount, tenure, employmentStatus, reason, employmentAddress } = req.body;
 
-      const result = await new Promise((resolve, reject) => {
-        db.run(
-          `INSERT INTO loan_applications (
-            userId, fullName, amount, tenure, employmentStatus, reason, employmentAddress
-          ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          [req.user.id, fullName, amount, tenure, employmentStatus, reason, employmentAddress],
-          function (err) {
-            if (err) reject(err);
-            else resolve(this.lastID);
-          }
-        );
-      });
+      const result = await db.run(
+        `INSERT INTO loan_applications (
+          userId, fullName, amount, tenure, employmentStatus, reason, employmentAddress
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [req.user.id, fullName, amount, tenure, employmentStatus, reason, employmentAddress]
+      );
 
       res.status(201).json({ 
-        id: result,
+        id: result.lastID,
         userId: req.user.id,
         fullName,
         amount,
@@ -480,22 +430,16 @@ app.post(
 // Get user loans - For User Dashboard - Loans
 app.get("/user/loans", authenticateToken, async (req, res, next) => {
   try {
-    const loans = await new Promise((resolve, reject) => {
-      db.all(
-        `SELECT 
-          la.*,
-          u.fullName as loanOfficerName
-         FROM loan_applications la
-         LEFT JOIN users u ON la.loanOfficerId = u.id
-         WHERE la.userId = ?
-         ORDER BY la.createdAt DESC`,
-        [req.user.id],
-        (err, rows) => {
-          if (err) reject(err);
-          else resolve(rows);
-        }
-      );
-    });
+    const loans = await db.all(
+      `SELECT 
+        la.*,
+        u.fullName as loanOfficerName
+       FROM loan_applications la
+       LEFT JOIN users u ON la.loanOfficerId = u.id
+       WHERE la.userId = ?
+       ORDER BY la.createdAt DESC`,
+      [req.user.id]
+    );
 
     res.json(loans);
   } catch (err) {
@@ -503,30 +447,23 @@ app.get("/user/loans", authenticateToken, async (req, res, next) => {
   }
 });
 
-
 // Admin & Verifier Dashboard routes
 // =======================================================================
 
 // Get all loans - For Admin & Verifier Dashboard
 app.get("/loans", authenticateToken, isVerifier, async (req, res, next) => {
   try {
-    const loans = await new Promise((resolve, reject) => {
-      db.all(
-        `SELECT 
-          la.*,
-          u.fullName AS userFullName, 
-          u.email AS userEmail,
-          v.fullName AS verifierName
-         FROM loan_applications la
-         JOIN users u ON la.userId = u.id
-         LEFT JOIN users v ON la.loanOfficerId = v.id
-         ORDER BY la.createdAt DESC`,
-        (err, rows) => {
-          if (err) reject(err);
-          else resolve(rows);
-        }
-      );
-    });
+    const loans = await db.all(
+      `SELECT 
+        la.*,
+        u.fullName AS userFullName, 
+        u.email AS userEmail,
+        v.fullName AS verifierName
+       FROM loan_applications la
+       JOIN users u ON la.userId = u.id
+       LEFT JOIN users v ON la.loanOfficerId = v.id
+       ORDER BY la.createdAt DESC`
+    );
 
     res.json(loans);
   } catch (err) {
@@ -537,24 +474,18 @@ app.get("/loans", authenticateToken, isVerifier, async (req, res, next) => {
 // Get recent loans - For Admin & Verifier Dashboard
 app.get("/loans/recent", authenticateToken, isVerifier, async (req, res, next) => {
   try {
-    const loans = await new Promise((resolve, reject) => {
-      db.all(
-        `SELECT 
-          la.*,
-          u.fullName as userFullName,
-          u.email as userEmail,
-          v.fullName as verifierName
-         FROM loan_applications la
-         JOIN users u ON la.userId = u.id
-         LEFT JOIN users v ON la.loanOfficerId = v.id
-         ORDER BY la.createdAt DESC
-         LIMIT 20`,
-        (err, rows) => {
-          if (err) reject(err);
-          else resolve(rows);
-        }
-      );
-    });
+    const loans = await db.all(
+      `SELECT 
+        la.*,
+        u.fullName as userFullName,
+        u.email as userEmail,
+        v.fullName as verifierName
+       FROM loan_applications la
+       JOIN users u ON la.userId = u.id
+       LEFT JOIN users v ON la.loanOfficerId = v.id
+       ORDER BY la.createdAt DESC
+       LIMIT 20`
+    );
 
     res.json(loans);
   } catch (err) {
@@ -565,39 +496,33 @@ app.get("/loans/recent", authenticateToken, isVerifier, async (req, res, next) =
 // Admin Dashboard Statistics
 app.get("/dashboard/admin", authenticateToken, isAdmin, async (req, res, next) => {
   try {
-    const stats = await new Promise((resolve, reject) => {
-      db.get(
-        `SELECT 
-          COUNT(DISTINCT users.id) AS activeUsers,
-          COUNT(DISTINCT loan_applications.userId) AS borrowers,
-          SUM(CASE WHEN loan_applications.status = 'approved' THEN loan_applications.amount ELSE 0 END) AS cashDisbursed,
-          (SELECT SUM(amount) FROM repayments WHERE status = 'completed') AS cashReceived,
-          (SELECT SUM(amount) FROM repayments WHERE status = 'completed') AS savings,
-          COUNT(CASE WHEN loan_applications.status = 'approved' AND 
-            (SELECT COUNT(*) FROM repayments WHERE repayments.loanId = loan_applications.id AND repayments.status = 'completed') > 0 
-            THEN 1 ELSE NULL END) AS repaidLoans,
-          COUNT(loan_applications.id) AS totalLoans,
-          COUNT(CASE WHEN loan_applications.status != 'approved' AND loan_applications.status != 'rejected' 
-            THEN 1 ELSE NULL END) AS otherAccounts
-         FROM users
-         LEFT JOIN loan_applications ON users.id = loan_applications.userId`,
-        (err, row) => {
-          if (err) reject(err);
-          else resolve({
-            activeUsers: row.activeUsers || 0,
-            borrowers: row.borrowers || 0,
-            cashDisbursed: row.cashDisbursed || 0,
-            cashReceived: row.cashReceived || 0,
-            savings: row.savings || 0,
-            repaidLoans: row.repaidLoans || 0,
-            loans: row.totalLoans || 0,
-            otherAccounts: row.otherAccounts || 0
-          });
-        }
-      );
-    });
+    const stats = await db.get(
+      `SELECT 
+        COUNT(DISTINCT users.id) AS activeUsers,
+        COUNT(DISTINCT loan_applications.userId) AS borrowers,
+        SUM(CASE WHEN loan_applications.status = 'approved' THEN loan_applications.amount ELSE 0 END) AS cashDisbursed,
+        (SELECT SUM(amount) FROM repayments WHERE status = 'completed') AS cashReceived,
+        (SELECT SUM(amount) FROM repayments WHERE status = 'completed') AS savings,
+        COUNT(CASE WHEN loan_applications.status = 'approved' AND 
+          (SELECT COUNT(*) FROM repayments WHERE repayments.loanId = loan_applications.id AND repayments.status = 'completed') > 0 
+          THEN 1 ELSE NULL END) AS repaidLoans,
+        COUNT(loan_applications.id) AS totalLoans,
+        COUNT(CASE WHEN loan_applications.status != 'approved' AND loan_applications.status != 'rejected' 
+          THEN 1 ELSE NULL END) AS otherAccounts
+       FROM users
+       LEFT JOIN loan_applications ON users.id = loan_applications.userId`
+    );
 
-    res.json(stats);
+    res.json({
+      activeUsers: stats.activeUsers || 0,
+      borrowers: stats.borrowers || 0,
+      cashDisbursed: stats.cashDisbursed || 0,
+      cashReceived: stats.cashReceived || 0,
+      savings: stats.savings || 0,
+      repaidLoans: stats.repaidLoans || 0,
+      loans: stats.totalLoans || 0,
+      otherAccounts: stats.otherAccounts || 0
+    });
   } catch (err) {
     next(err);
   }
@@ -606,33 +531,27 @@ app.get("/dashboard/admin", authenticateToken, isAdmin, async (req, res, next) =
 // Verifier Dashboard Statistics
 app.get("/dashboard/verifier", authenticateToken, isVerifier, async (req, res, next) => {
   try {
-    const stats = await new Promise((resolve, reject) => {
-      db.get(
-        `SELECT 
-          COUNT(*) AS totalLoans,
-          COUNT(DISTINCT userId) AS borrowers,
-          SUM(CASE WHEN status = 'approved' THEN amount ELSE 0 END) AS cashDisbursed,
-          (SELECT SUM(amount) FROM repayments WHERE status = 'completed') AS savings,
-          COUNT(CASE WHEN status = 'approved' AND 
-            (SELECT COUNT(*) FROM repayments WHERE repayments.loanId = loan_applications.id AND repayments.status = 'completed') > 0 
-            THEN 1 ELSE NULL END) AS repaidLoans,
-          (SELECT SUM(amount) FROM repayments WHERE status = 'completed') AS cashReceived
-         FROM loan_applications`,
-        (err, row) => {
-          if (err) reject(err);
-          else resolve({
-            loans: row.totalLoans || 0,
-            borrowers: row.borrowers || 0,
-            cashDisbursed: row.cashDisbursed || 0,
-            savings: row.savings || 0,
-            repaidLoans: row.repaidLoans || 0,
-            cashReceived: row.cashReceived || 0
-          });
-        }
-      );
-    });
+    const stats = await db.get(
+      `SELECT 
+        COUNT(*) AS totalLoans,
+        COUNT(DISTINCT userId) AS borrowers,
+        SUM(CASE WHEN status = 'approved' THEN amount ELSE 0 END) AS cashDisbursed,
+        (SELECT SUM(amount) FROM repayments WHERE status = 'completed') AS savings,
+        COUNT(CASE WHEN status = 'approved' AND 
+          (SELECT COUNT(*) FROM repayments WHERE repayments.loanId = loan_applications.id AND repayments.status = 'completed') > 0 
+          THEN 1 ELSE NULL END) AS repaidLoans,
+        (SELECT SUM(amount) FROM repayments WHERE status = 'completed') AS cashReceived
+       FROM loan_applications`
+    );
 
-    res.json(stats);
+    res.json({
+      loans: stats.totalLoans || 0,
+      borrowers: stats.borrowers || 0,
+      cashDisbursed: stats.cashDisbursed || 0,
+      savings: stats.savings || 0,
+      repaidLoans: stats.repaidLoans || 0,
+      cashReceived: stats.cashReceived || 0
+    });
   } catch (err) {
     next(err);
   }
@@ -642,21 +561,15 @@ app.get("/dashboard/verifier", authenticateToken, isVerifier, async (req, res, n
 app.put("/loans/:id/verify", authenticateToken, isVerifier, async (req, res) => {
   try {
     const { id } = req.params;
-    const result = await new Promise((resolve, reject) => {
-      db.run(
-        `UPDATE loan_applications SET 
-          status = 'verified', 
-          loanOfficerId = ? 
-         WHERE id = ? AND status = 'pending'`,
-        [req.user.id, id],
-        function(err) {
-          if (err) reject(err);
-          else resolve(this.changes);
-        }
-      );
-    });
+    const result = await db.run(
+      `UPDATE loan_applications SET 
+        status = 'verified', 
+        loanOfficerId = ? 
+       WHERE id = ? AND status = 'pending'`,
+      [req.user.id, id]
+    );
 
-    if (result === 0) return res.status(400).json({ error: "Loan not found or not pending" });
+    if (result.changes === 0) return res.status(400).json({ error: "Loan not found or not pending" });
     res.json({ message: "Loan verified successfully" });
   } catch (err) {
     res.status(500).json({ error: "Server error" });
@@ -674,13 +587,7 @@ app.put("/loans/:id/status", authenticateToken, isAdmin, [
     const { status, disbursedDate, repaymentDate } = req.body;
     
     // Get current loan status
-    const loan = await new Promise((resolve, reject) => {
-      db.get("SELECT status FROM loan_applications WHERE id = ?", [id], (err, row) => {
-        if (err) reject(err);
-        else resolve(row);
-      });
-    });
-
+    const loan = await db.get("SELECT status FROM loan_applications WHERE id = ?", [id]);
     if (!loan) return res.status(404).json({ error: "Loan not found" });
     
     // Validate status transition
@@ -688,23 +595,17 @@ app.put("/loans/:id/status", authenticateToken, isAdmin, [
       return res.status(400).json({ error: "Only pending loans can be verified" });
     }
 
-    const result = await new Promise((resolve, reject) => {
-      db.run(
-        `UPDATE loan_applications SET
-          status = ?,
-          loanOfficerId = ?,
-          disbursedDate = ?,
-          repaymentDate = ?
-         WHERE id = ?`,
-        [status, req.user.id, disbursedDate, repaymentDate, id],
-        function(err) {
-          if (err) reject(err);
-          else resolve(this.changes);
-        }
-      );
-    });
+    const result = await db.run(
+      `UPDATE loan_applications SET
+        status = ?,
+        loanOfficerId = ?,
+        disbursedDate = ?,
+        repaymentDate = ?
+       WHERE id = ?`,
+      [status, req.user.id, disbursedDate, repaymentDate, id]
+    );
 
-    if (result === 0) return res.status(404).json({ error: "Loan not found" });
+    if (result.changes === 0) return res.status(404).json({ error: "Loan not found" });
     res.json({ message: "Loan status updated successfully" });
   } catch (err) {
     res.status(500).json({ error: "Server error" });
@@ -717,7 +618,17 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: "Something went wrong!" });
 });
 
-
 // Start server
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+async function startServer() {
+  try {
+    await initializeDatabase();
+    app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+  } catch (err) {
+    console.error("Failed to start server:", err);
+    process.exit(1);
+  }
+}
+
+startServer();
