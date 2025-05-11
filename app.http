@@ -1,0 +1,100 @@
+### Health Check
+GET http://localhost:5000/
+Accept: application/json
+
+### User Signup
+POST http://localhost:5000/signup
+Content-Type: application/json
+
+{
+  "fullName": "Test User",
+  "email": "test@example.com",
+  "password": "test1234"
+}
+
+### User Login
+POST http://localhost:5000/login
+Content-Type: application/json
+
+{
+  "email": "test@example.com",
+  "password": "user"
+}
+
+### Admin Login
+POST http://localhost:5000/login
+Content-Type: application/json
+
+{
+  "email": "admin@loanmanager.com",
+  "password": "admin123"
+}
+
+### Verifier Login
+POST http://localhost:5000/login
+Content-Type: application/json
+
+{
+  "email": "verifier@loanmanager.com",
+  "password": "verifier123"
+}
+
+### Get Loan Application Form (requires auth)
+GET http://localhost:5000/loan-application-form
+Authorization: `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6Mywicm9sZSI6InZlcmlmaWVyIiwiaWF0IjoxNzQ3MDAxNjEzLCJleHAiOjE3NDcwMDUyMTN9.L-XrtpsXuCThx0cfyb82UaMgaDX5wL0BnEFrKgYFWl0`
+Accept: application/json
+
+### Submit Loan Application (user)
+POST http://localhost:5000/loans
+Authorization: Bearer {{user_token}}
+Content-Type: application/json
+
+{
+  "fullName": "Loan Applicant",
+  "amount": 25000,
+  "tenure": 12,
+  "employmentStatus": "Employed",
+  "reason": "Home improvement",
+  "employmentAddress": "123 Main St, City"
+}
+
+### Get User Loans (user)
+GET http://localhost:5000/user/loans
+Authorization: Bearer {{user_token}}
+Accept: application/json
+
+### Get All Loans (admin/verifier)
+GET http://localhost:5000/loans
+Authorization: Bearer {{admin_token}}
+Accept: application/json
+
+### Get Recent Loans (admin/verifier)
+GET http://localhost:5000/loans/recent
+Authorization: Bearer {{verifier_token}}
+Accept: application/json
+
+### Admin Dashboard Stats
+GET http://localhost:5000/dashboard/admin
+Authorization: Bearer {{admin_token}}
+Accept: application/json
+
+### Verifier Dashboard Stats
+GET http://localhost:5000/dashboard/verifier
+Authorization: Bearer {{verifier_token}}
+Accept: application/json
+
+### Verify a Loan (verifier)
+PUT http://localhost:5000/loans/3/verify
+Authorization: Bearer {{verifier_token}}
+Content-Type: application/json
+
+### Update Loan Status (admin)
+PUT http://localhost:5000/loans/4/status
+Authorization: Bearer {{admin_token}}
+Content-Type: application/json
+
+{
+  "status": "approved",
+  "disbursedDate": "2023-06-15",
+  "repaymentDate": "2024-06-15"
+}
